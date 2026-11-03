@@ -76,6 +76,15 @@
         </template>
         <PreferenceSwitch id="chkAutoPlayVideo" v-model="autoPlayVideo" @change="onChange" />
     </PreferenceRow>
+    <PreferenceRow for-id="chkTeslaCanvasMode">
+        <template #label>
+            <strong>Tesla Driving Mode (Canvas Player)</strong>
+            <p class="text-xs text-gray-500">
+                Renders video onto HTML5 Canvas without a &lt;video&gt; element for in-car browser playback in Drive.
+            </p>
+        </template>
+        <PreferenceSwitch id="chkTeslaCanvasMode" v-model="teslaCanvasMode" @change="onChange" />
+    </PreferenceRow>
     <PreferenceRow for-id="chkAutoDisplayCaptions">
         <template #label>
             <strong v-t="'actions.auto_display_captions'" />
@@ -510,6 +519,7 @@ const minSegmentLength = usePreferenceNumber("minSegmentLength", 0);
 const dearrow = usePreferenceBoolean("dearrow", false);
 const selectedTheme = usePreferenceString("theme", "dark");
 const autoPlayVideo = usePreferenceBoolean("playerAutoPlay", true);
+const teslaCanvasMode = usePreferenceBoolean("teslaCanvasMode", false);
 const autoDisplayCaptions = usePreferenceBoolean("autoDisplayCaptions", false);
 const autoPlayNextCountdown = usePreferenceNumber("autoPlayNextCountdown", 5);
 const listen = usePreferenceBoolean("listen", false);

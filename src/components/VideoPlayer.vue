@@ -6,12 +6,21 @@
         :class="{ 'max-h-[75vh] min-h-64 bg-black': !isEmbed }"
     >
         <video
+            v-if="!isCanvasMode"
             ref="videoEl"
             class="w-full"
             data-shaka-player
             :autoplay="shouldAutoPlay"
             :loop="selectedAutoLoop"
             playsinline
+        />
+        <canvas v-if="isCanvasMode" ref="canvasEl" class="aspect-video size-full max-h-[75vh] object-contain" />
+        <audio
+            v-if="isCanvasMode"
+            ref="audioEl"
+            data-shaka-player
+            :autoplay="shouldAutoPlay"
+            :loop="selectedAutoLoop"
         />
         <button
             v-if="inSegment"
@@ -34,15 +43,15 @@
             class="absolute top-1/2 left-1/2 flex -translate-1/2 transform flex-col items-center gap-6 rounded-4xl bg-white/80 px-8 py-4 text-lg dark:bg-dark-700/80"
         >
             <i-fa6-solid-gauge-high class="size-25 p-5" />
-            <span v-text="videoEl.playbackRate" />
+            <span v-text="activeMediaEl?.playbackRate" />
         </div>
         <div
             v-if="showCurrentVolume"
             class="absolute top-1/2 left-1/2 flex -translate-1/2 transform flex-col items-center gap-6 rounded-4xl bg-white/80 px-8 py-4 text-lg dark:bg-dark-700/80"
         >
-            <i-fa6-solid-volume-high v-if="videoEl.volume > 0" class="size-25 p-5" />
+            <i-fa6-solid-volume-high v-if="activeMediaEl?.volume > 0" class="size-25 p-5" />
             <i-fa6-solid-volume-xmark v-else class="size-25 p-5" />
-            <span v-text="Math.round(videoEl.volume * 100) / 100" />
+            <span v-text="Math.round((activeMediaEl?.volume || 0) * 100) / 100" />
         </div>
     </div>
 
@@ -71,6 +80,7 @@ import { ref, computed, onMounted, onActivated, onDeactivated, onUnmounted } fro
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { parseTimeParam } from "@/utils/Misc";
+import { CanvasPlayerEngine } from "@/utils/canvasPlayer.js";
 import ModalComponent from "./ModalComponent.vue";
 import {
     getPreferenceBoolean,
@@ -106,6 +116,23 @@ const emit = defineEmits(["timeupdate", "ended", "navigateNext"]);
 
 const container = ref(null);
 const videoEl = ref(null);
+const canvasEl = ref(null);
+const audioEl = ref(null);
+let canvasPlayer = null;
+
+const isTeslaBrowser = typeof navigator !== "undefined" && navigator.userAgent.includes("Tesla");
+const isCanvasMode = computed(() => {
+    return (
+        route.query.tesla === "true" ||
+        route.query.canvas === "true" ||
+        getPreferenceBoolean("teslaCanvasMode", false) ||
+        isTeslaBrowser
+    );
+});
+
+const activeMediaEl = computed(() => {
+    return isCanvasMode.value ? audioEl.value : videoEl.value;
+});
 
 const lastUpdate = ref(new Date().getTime());
 const initialSeekComplete = ref(false);
@@ -135,12 +162,14 @@ const shouldAutoPlay = computed(() => {
 const preferredVideoCodecs = computed(() => {
     var preferredVideoCodecs = [];
     const enabledCodecs = getPreferenceString("enabledCodecs", "vp9,avc").split(",");
+    const el = activeMediaEl.value;
+    if (!el) return ["avc1", "vp9"];
 
-    if (videoEl.value.canPlayType('video/mp4; codecs="av01.0.08M.08"') !== "" && enabledCodecs.includes("av1"))
+    if (el.canPlayType('video/mp4; codecs="av01.0.08M.08"') !== "" && enabledCodecs.includes("av1"))
         preferredVideoCodecs.push("av01");
-    if (videoEl.value.canPlayType('video/webm; codecs="vp9"') !== "" && enabledCodecs.includes("vp9"))
+    if (el.canPlayType('video/webm; codecs="vp9"') !== "" && enabledCodecs.includes("vp9"))
         preferredVideoCodecs.push("vp9");
-    if (videoEl.value.canPlayType('video/mp4; codecs="avc1.4d401f"') !== "" && enabledCodecs.includes("avc"))
+    if (el.canPlayType('video/mp4; codecs="avc1.4d401f"') !== "" && enabledCodecs.includes("avc"))
         preferredVideoCodecs.push("avc1");
 
     return preferredVideoCodecs;
@@ -151,7 +180,7 @@ function findCurrentSegment(time) {
 }
 
 function onClickSkipSegment() {
-    skipSegment(videoEl.value);
+    if (activeMediaEl.value) skipSegment(activeMediaEl.value);
 }
 
 function skipSegment(el, segment) {
@@ -173,8 +202,10 @@ function adjustPlaybackSpeed(newSpeed) {
 }
 
 function adjustPlaybackVolume(newVolume) {
+    const el = activeMediaEl.value;
+    if (!el) return;
     const normalizedVolume = Math.min(1, Math.max(0, newVolume));
-    videoEl.value.volume = normalizedVolume;
+    el.volume = normalizedVolume;
     if (hideCurrentVolumeTimeout) window.clearTimeout(hideCurrentVolumeTimeout);
     showCurrentVolume.value = false;
     showCurrentVolume.value = true;
@@ -370,8 +401,8 @@ async function updateProgressDatabase(time) {
 }
 
 function seek(time) {
-    if (videoEl.value) {
-        videoEl.value.currentTime = time;
+    if (activeMediaEl.value) {
+        activeMediaEl.value.currentTime = time;
     }
 }
 
@@ -446,7 +477,10 @@ async function setPlayerAttrs(localPlayer, el, uri, mime, shaka) {
 
     playerInstance = localPlayer;
 
-    const disableVideo = getPreferenceBoolean("listen", false) && !props.video.livestream;
+    const disableVideo =
+        (isCanvasMode.value || getPreferenceBoolean("listen", false)) &&
+        !props.video.livestream &&
+        props.video.audioStreams?.length > 0;
 
     const prefetchLimit = Math.min(Math.max(getPreferenceNumber("prefetchLimit", 2), 0), 10);
 
@@ -573,6 +607,39 @@ async function setPlayerAttrs(localPlayer, el, uri, mime, shaka) {
 
             applyPreferredTextTrack();
             await setupThumbnailTrack();
+
+            if (isCanvasMode.value && canvasEl.value && audioEl.value) {
+                if (canvasPlayer) {
+                    canvasPlayer.destroy();
+                    canvasPlayer = null;
+                }
+                const videoStreams = props.video.videoStreams || [];
+                const mp4Streams = videoStreams.filter(
+                    s =>
+                        (s.mimeType === "video/mp4" || s.format === "MPEG_4" || s.format === "MP4") &&
+                        (!s.codec ||
+                            s.codec.startsWith("avc1") ||
+                            s.codec.startsWith("av01") ||
+                            s.codec.startsWith("hvc1")),
+                );
+                const targetStream =
+                    mp4Streams.find(s => s.quality === "720p") ||
+                    mp4Streams.find(s => s.quality === "1080p") ||
+                    mp4Streams.find(s => s.quality === "480p") ||
+                    mp4Streams.find(s => s.quality === "360p") ||
+                    mp4Streams[0] ||
+                    videoStreams.find(s => s.mimeType === "video/mp4" || s.format === "MPEG_4" || s.format === "MP4") ||
+                    videoStreams[0];
+
+                if (targetStream) {
+                    canvasPlayer = new CanvasPlayerEngine(canvasEl.value, audioEl.value);
+                    canvasPlayer
+                        .load(targetStream.url, props.video.duration, startTime, props.video.proxyUrl)
+                        .catch(e => {
+                            console.error("CanvasPlayerEngine error:", e);
+                        });
+                }
+            }
         })
         .catch(e => {
             console.error(e);
@@ -586,18 +653,26 @@ async function setPlayerAttrs(localPlayer, el, uri, mime, shaka) {
     updateChapterMarkers();
 
     seekbar.addEventListener("mouseup", () => {
-        videoEl.value.focus();
+        activeMediaEl.value?.focus();
     });
 }
 
 async function loadVideo() {
     initialSeekComplete.value = false;
 
+    if (canvasPlayer) {
+        canvasPlayer.destroy();
+        canvasPlayer = null;
+    }
+
     updateSponsors();
 
-    const el = videoEl.value;
+    const el = activeMediaEl.value;
+    if (!el) return;
 
-    el.setAttribute("poster", props.video.thumbnailUrl);
+    if (!isCanvasMode.value) {
+        el.setAttribute("poster", props.video.thumbnailUrl);
+    }
 
     const noPrevPlayer = !playerInstance;
 
@@ -747,6 +822,10 @@ async function loadVideo() {
 }
 
 function destroy(hotkeys) {
+    if (canvasPlayer) {
+        canvasPlayer.destroy();
+        canvasPlayer = null;
+    }
     if (thumbnailVttUrl) {
         URL.revokeObjectURL(thumbnailVttUrl);
         thumbnailVttUrl = null;
@@ -776,7 +855,8 @@ onActivated(() => {
         hotkeysLib(
             "f,m,j,k,l,c,space,up,down,left,right,ctrl+left,ctrl+right,home,end,0,1,2,3,4,5,6,7,8,9,shift+n,shift+s,shift+,,shift+.,alt+p,return,.,,",
             function (e, handler) {
-                const el = videoEl.value;
+                const el = activeMediaEl.value;
+                if (!el) return;
                 switch (handler.key) {
                     case "f":
                         uiInstance.getControls().toggleFullScreen();
