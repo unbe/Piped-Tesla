@@ -740,8 +740,9 @@ async function loadVideo() {
         uri = props.video.hls;
         mime = "application/x-mpegURL";
     } else {
-        uri = props.video.videoStreams.findLast(stream => stream.codec == null).url;
-        mime = "video/mp4";
+        const stream = props.video.videoStreams.findLast(stream => stream.codec == null);
+        uri = stream?.url;
+        mime = stream?.codec ? `video/mp4; codecs="${stream.codec}"` : 'video/mp4; codecs="avc1.42E01E"';
     }
 
     if (noPrevPlayer)
