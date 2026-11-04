@@ -8,7 +8,7 @@ import vueParser from "vue-eslint-parser";
 
 export default defineConfig([
     {
-        ignores: ["**/.*", "node_modules/**", "dist/**", "dist-ci/**"],
+        ignores: ["**/.*", "node_modules/**", "dist/**", "dist-ci/**", "dev-dist/**"],
     },
     {
         files: ["**/*.{js,mjs,cjs,vue}"],

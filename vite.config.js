@@ -153,6 +153,10 @@ export default defineConfig({
         }),
         VitePWA({
             registerType: "autoUpdate",
+            devOptions: {
+                enabled: true,
+                type: "module",
+            },
             workbox: {
                 globPatterns: [
                     "**/*.{css,html}",
@@ -180,6 +184,10 @@ export default defineConfig({
                 ],
             },
             manifest: {
+                id: "/",
+                start_url: "/",
+                scope: "/",
+                display: "standalone",
                 name: "Piped",
                 short_name: "Piped",
                 background_color: "#000000",
@@ -195,16 +203,26 @@ export default defineConfig({
                     },
                 },
                 icons: [
-                    { src: "./img/icons/android-chrome-192x192.png", sizes: "192x192", type: "image/png" },
-                    { src: "./img/icons/android-chrome-512x512.png", sizes: "512x512", type: "image/png" },
                     {
-                        src: "./img/icons/android-chrome-maskable-192x192.png",
+                        src: "/img/icons/android-chrome-192x192.png",
+                        sizes: "192x192",
+                        type: "image/png",
+                        purpose: "any",
+                    },
+                    {
+                        src: "/img/icons/android-chrome-512x512.png",
+                        sizes: "512x512",
+                        type: "image/png",
+                        purpose: "any",
+                    },
+                    {
+                        src: "/img/icons/android-chrome-maskable-192x192.png",
                         sizes: "192x192",
                         type: "image/png",
                         purpose: "maskable",
                     },
                     {
-                        src: "./img/icons/android-chrome-maskable-512x512.png",
+                        src: "/img/icons/android-chrome-maskable-512x512.png",
                         sizes: "512x512",
                         type: "image/png",
                         purpose: "maskable",
@@ -212,7 +230,9 @@ export default defineConfig({
                 ],
             },
         }),
-        eslintPlugin(),
+        eslintPlugin({
+            exclude: ["**/node_modules/**", "**/dev-sw*", "**/virtual:*"],
+        }),
     ],
     resolve: {
         alias: {
