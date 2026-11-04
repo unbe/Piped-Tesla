@@ -410,7 +410,7 @@ async function setPlayerAttrs(localPlayer, el, uri, mime, shaka) {
     const url = "/watch?v=" + props.video.id;
 
     if (!uiInstance) {
-        destroy();
+        await destroy();
         const OpenButton = class extends shaka.ui.Element {
             constructor(parent, controls) {
                 super(parent, controls);
@@ -822,7 +822,7 @@ async function loadVideo() {
     }
 }
 
-function destroy(hotkeys) {
+async function destroy(hotkeys) {
     if (canvasPlayer) {
         canvasPlayer.destroy();
         canvasPlayer = null;
@@ -831,20 +831,43 @@ function destroy(hotkeys) {
         URL.revokeObjectURL(thumbnailVttUrl);
         thumbnailVttUrl = null;
     }
-    if (uiInstance && !document.pictureInPictureElement) {
-        uiInstance.destroy();
-        uiInstance = undefined;
-        playerInstance = undefined;
+    const oldUi = uiInstance;
+    const oldPlayer = playerInstance;
+    uiInstance = undefined;
+    playerInstance = undefined;
+
+    if (oldUi && !document.pictureInPictureElement) {
+        try {
+            await oldUi.destroy();
+        } catch {
+            // Ignore if Shaka UI elements were already detached
+        }
     }
-    if (playerInstance) {
-        playerInstance.destroy();
-        if (!document.pictureInPictureElement) playerInstance = undefined;
+    if (oldPlayer) {
+        try {
+            await oldPlayer.destroy();
+        } catch {
+            // Ignore cleanup error
+        }
     }
     if (hotkeys) hotkeysLib?.unbind();
-    container.value?.querySelectorAll("div").forEach(node => node.remove());
+    container.value?.querySelectorAll("div").forEach(node => {
+        if (node.parentNode === container.value) {
+            node.remove();
+        }
+    });
 }
 
 onMounted(() => {
+    if (container.value) {
+        const origRemoveChild = container.value.removeChild.bind(container.value);
+        container.value.removeChild = function (child) {
+            if (child && child.parentNode === container.value) {
+                return origRemoveChild(child);
+            }
+            return child;
+        };
+    }
     if (!shakaLib) shakaPromise = shakaImport.then(shaka => shaka.default).then(shaka => (shakaLib = shaka));
     if (!hotkeysLib) hotkeysPromise = hotkeysImport.then(mod => mod.default).then(hk => (hotkeysLib = hk));
 });

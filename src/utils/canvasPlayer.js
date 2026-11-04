@@ -114,7 +114,26 @@ export class CanvasPlayerEngine {
         this.videoUrl = rewriteStreamUrl(videoUrl, proxyUrl);
         this.duration = expectedDuration;
         this.isReady = false;
+        this.currentByteOffset = 0;
+        this.totalBytes = null;
         this.abortController = new AbortController();
+
+        // Probe total content length upfront via HEAD request
+        try {
+            const headRes = await fetch(this.videoUrl, {
+                method: "HEAD",
+                signal: this.abortController?.signal,
+            });
+            const clen = headRes.headers.get("Content-Length");
+            if (clen) {
+                const parsed = parseInt(clen, 10);
+                if (!isNaN(parsed) && parsed > 0) {
+                    this.totalBytes = parsed;
+                }
+            }
+        } catch {
+            // Non-fatal if HEAD fails; range requests will determine size
+        }
 
         // Initialize MP4Box parser
         this.mp4box = MP4Box.createFile();
@@ -257,10 +276,16 @@ export class CanvasPlayerEngine {
 
     async fetchChunk(startByte, size = this.chunkSize) {
         if (this.isDestroyed || this.isFetching) return;
+        if (this.totalBytes && startByte >= this.totalBytes) return;
         this.isFetching = true;
 
         try {
-            const endByte = startByte + size - 1;
+            let endByte = startByte + size - 1;
+            if (this.totalBytes && endByte >= this.totalBytes) {
+                endByte = this.totalBytes - 1;
+            }
+            if (startByte > endByte) return;
+
             // Append range query param to support proxies rewriting headers
             const fetchUrl = new URL(this.videoUrl);
             fetchUrl.searchParams.set("range", `${startByte}-${endByte}`);
@@ -270,6 +295,12 @@ export class CanvasPlayerEngine {
                 headers,
                 signal: this.abortController?.signal,
             });
+
+            // If range is past EOF, server returns 400 or 416
+            if (res.status === 416 || (res.status === 400 && startByte > 0)) {
+                this.totalBytes = startByte;
+                return;
+            }
 
             if (!res.ok && res.status !== 206) {
                 throw new Error(`HTTP ${res.status} fetching video range ${startByte}-${endByte}`);
@@ -289,6 +320,11 @@ export class CanvasPlayerEngine {
             }
 
             this.currentByteOffset = startByte + buf.byteLength;
+
+            // If fewer bytes were returned than requested, EOF was reached
+            if (buf.byteLength < size) {
+                this.totalBytes = this.currentByteOffset;
+            }
         } catch (e) {
             if (e.name !== "AbortError") {
                 console.warn("CanvasPlayer chunk fetch error:", e);
