@@ -485,8 +485,8 @@ async function setPlayerAttrs(localPlayer, el, uri, mime, shaka) {
     const prefetchLimit = Math.min(Math.max(getPreferenceNumber("prefetchLimit", 2), 0), 10);
 
     playerInstance.configure({
-        preferredVideoCodecs: preferredVideoCodecs.value,
-        preferredAudioCodecs: ["opus", "mp4a"],
+        preferredVideo: preferredVideoCodecs.value.map(codec => ({ codec })),
+        preferredAudio: [{ codec: "opus" }, { codec: "mp4a" }],
         manifest: {
             disableVideo: disableVideo,
         },
