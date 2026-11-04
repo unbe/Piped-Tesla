@@ -11,6 +11,30 @@
 
 An open-source alternative frontend for YouTube which is efficient by design.
 
+---
+
+## Tesla Driving Mode & Casting Modifications
+
+This branch contains modifications tailored for **in-car browser environments (such as Tesla Chromium)** during driving mode, alongside **web-only phone-to-car video casting**:
+
+### 1. Tesla Driving Mode Player (WebCodecs + Canvas)
+- **Problem**: When Tesla vehicles shift into Drive (`D`) or Reverse (`R`), the infotainment Chromium browser intercepts and blanks out/pauses all HTML `<video>` elements.
+- **Solution**: Completely excludes `<video>` tags from the DOM when Tesla mode is active:
+  - Video frames are drawn to an HTML5 `<canvas>` via `CanvasPlayerEngine` (`src/utils/canvasPlayer.js`).
+  - Decoding uses native browser WebCodecs `VideoDecoder` with ISO BMFF (`mp4box.js`) demuxing.
+  - An `<audio>` element serves as the master synchronization clock via Shaka Player, preserving full support for audio, seeking, playback speed, subtitles, and SponsorBlock.
+  - **Activation**: Enabled automatically when a Tesla User-Agent is detected, toggled via **Preferences ➔ Tesla / Canvas Mode**, or activated with query parameters `?tesla=true` or `?canvas=true`.
+
+### 2. Android Web Share Target & Real-time Phone-to-Tesla Casting
+- **Web Share Target (PWA)**: When Piped is added to an Android phone's home screen via Chrome, Android registers it in the system Share Sheet. Tapping **Share** inside the native YouTube app displays Piped as a share destination without requiring third-party Android apps or APKs.
+- **Real-time Casting Engine (SSE)**: Built-in push queue (`/api/cast/events`, `/api/cast/push`, `/api/cast/status`). When a video is shared or cast from a phone, the active Tesla browser immediately navigates and begins canvas playback.
+- **Pairing & Share Target UI**:
+  - Modal in the top navigation bar with a QR code for mobile pairing, live connection status, and manual URL input.
+  - Dedicated `/share-target` handler with auto-parsing of YouTube URLs, shorts, embeds, and timestamps.
+  - Sender identification to prevent the phone from navigating away from the share confirmation screen.
+
+---
+
 A list of public instances can be found at the documentation [here](https://github.com/TeamPiped/documentation/blob/main/content/docs/public-instances/index.md).
 
 # The Problem
@@ -43,6 +67,8 @@ By using Piped, you can freely watch and listen to content without the fear of p
 -   [x] Embedded video support
 -   [x] No age restriction
 -   [x] Bypasses Geo restrictions if possible through a federated network
+-   [x] Tesla Driving Mode (WebCodecs + Canvas player without `<video>` tag)
+-   [x] Android Web Share Target & Real-time Phone-to-Tesla Casting
 
 **Technical Features**
 
