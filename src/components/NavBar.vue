@@ -42,6 +42,17 @@
         </button>
         <!-- navigation bar for large screen devices -->
         <ul class="hidden list-none *:pl-3 md:flex md:flex-1 md:justify-end">
+            <li>
+                <button
+                    type="button"
+                    class="flex cursor-pointer items-center gap-1.5 hover:text-red-500 dark:hover:text-red-400"
+                    title="Cast to Tesla"
+                    @click="showCastModal = true"
+                >
+                    <i-fa6-solid-tower-broadcast class="size-4" />
+                    <span class="size-2 rounded-full" :class="isConnected ? 'bg-green-500' : 'bg-gray-400'" />
+                </button>
+            </li>
             <li v-if="shouldShowTrending">
                 <router-link
                     v-t="'titles.trending'"
@@ -114,6 +125,18 @@
             <i-fa6-solid-play />
             <i18n-t keypath="titles.feed"></i18n-t>
         </router-link>
+        <button
+            type="button"
+            class="cursor-pointer"
+            @click="
+                showCastModal = true;
+                showTopNav = false;
+            "
+        >
+            <i-fa6-solid-tower-broadcast />
+            <span class="flex-1 text-left">Cast to Tesla</span>
+            <span class="size-2 rounded-full" :class="isConnected ? 'bg-green-500' : 'bg-gray-400'" />
+        </button>
     </div>
     <!-- search suggestions for mobile devices -->
     <div class="relative mb-2 inline-flex w-full items-center md:hidden">
@@ -137,6 +160,7 @@
         :search-text="searchText"
         @searchchange="onSearchTextChange"
     />
+    <CastModal v-if="showCastModal" @close="showCastModal = false" />
 </template>
 
 <script setup>
@@ -144,13 +168,18 @@ import { ref, computed, watch, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import SearchSuggestions from "./SearchSuggestions.vue";
 import ClearButton from "./ui/ClearButton.vue";
+import CastModal from "./CastModal.vue";
 import hotkeys from "hotkeys-js";
 import { getAuthToken } from "@/composables/useApi.js";
 import { getPreferenceBoolean, getPreferenceString } from "@/composables/usePreferences.js";
 import { useConfig } from "@/composables/useConfig.js";
+import { useCast } from "@/composables/useCast.js";
 
 const router = useRouter();
 const route = useRoute();
+
+const showCastModal = ref(false);
+const { isConnected } = useCast();
 
 const videoSearch = ref(null);
 const searchSuggestions = ref(null);
@@ -186,6 +215,7 @@ watch(
     () => route.fullPath,
     () => {
         updateSearchTextFromURLSearchParams();
+        showCastModal.value = false;
     },
 );
 

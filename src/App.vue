@@ -18,12 +18,17 @@
 
 <script setup>
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import NavBar from "./components/NavBar.vue";
 import FooterComponent from "./components/FooterComponent.vue";
 import { testLocalStorage, usePreferenceString } from "@/composables/usePreferences.js";
 import { getDefaultLanguage, TimeAgo, TimeAgoConfig } from "@/composables/useFormatting.js";
 import { fetchSubscriptions } from "@/composables/useSubscriptions.js";
 import { getChannelGroups, createOrUpdateChannelGroup } from "@/composables/useChannelGroups.js";
+import { useCast } from "@/composables/useCast.js";
+
+const router = useRouter();
+const { initCastReceiver, disconnectCastReceiver } = useCast();
 
 const darkModePreference = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -152,10 +157,13 @@ onMounted(() => {
             applyLocale(locale);
         });
     })();
+
+    initCastReceiver(router);
 });
 
 onBeforeUnmount(() => {
     darkModePreference.removeEventListener("change", handlePreferredColorSchemeChange);
+    disconnectCastReceiver();
 });
 </script>
 

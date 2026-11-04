@@ -74,6 +74,16 @@ const routes = [
         component: () => import("../components/ImportPage.vue"),
     },
     {
+        path: "/share-target",
+        name: "ShareTarget",
+        component: () => import("../components/ShareTargetPage.vue"),
+    },
+    {
+        path: "/cast",
+        name: "Cast",
+        component: () => import("../components/ShareTargetPage.vue"),
+    },
+    {
         path: "/:videoId([a-zA-Z0-9_-]{11})",
         component: () => import("../components/VideoRedirect.vue"),
     },
