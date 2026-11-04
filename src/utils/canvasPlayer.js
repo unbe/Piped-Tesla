@@ -54,6 +54,8 @@ export class CanvasPlayerEngine {
         this.currentByteOffset = 0;
         this.totalBytes = null;
         this.isFetching = false;
+        this.needsKeyframe = true;
+        this.seekEpoch = 0;
         this.maxBufferAheadSeconds = 12; // Buffer up to 12s ahead of mediaClock.currentTime
         this.maxQueuedFrames = 25; // Strict cap on open GPU VideoFrame allocations
 
@@ -251,10 +253,20 @@ export class CanvasPlayerEngine {
         }
 
         this.decoder.configure(config);
+        this.needsKeyframe = true;
     }
 
     decodeSample(sample) {
         if (!this.decoder || this.decoder.state !== "configured") return;
+
+        // WebCodecs requires a keyframe after configure() or flush().
+        // Drop any delta frames until we receive a keyframe.
+        if (this.needsKeyframe) {
+            if (!sample.is_sync) {
+                return;
+            }
+            this.needsKeyframe = false;
+        }
 
         const cts = sample.cts ?? sample.dts ?? 0;
         const timestampUs = (cts / this.timescale) * 1_000_000;
@@ -271,6 +283,8 @@ export class CanvasPlayerEngine {
             this.decoder.decode(chunk);
         } catch (e) {
             console.warn("Failed to decode video chunk:", e);
+            // If decoding failed, re-assert keyframe requirement for safety
+            this.needsKeyframe = true;
         }
     }
 
@@ -278,6 +292,7 @@ export class CanvasPlayerEngine {
         if (this.isDestroyed || this.isFetching) return;
         if (this.totalBytes && startByte >= this.totalBytes) return;
         this.isFetching = true;
+        const currentEpoch = this.seekEpoch;
 
         try {
             let endByte = startByte + size - 1;
@@ -296,6 +311,8 @@ export class CanvasPlayerEngine {
                 signal: this.abortController?.signal,
             });
 
+            if (currentEpoch !== this.seekEpoch || this.isDestroyed) return;
+
             // If range is past EOF, server returns 400 or 416
             if (res.status === 416 || (res.status === 400 && startByte > 0)) {
                 this.totalBytes = startByte;
@@ -313,11 +330,15 @@ export class CanvasPlayerEngine {
             }
 
             const buf = await res.arrayBuffer();
+            if (currentEpoch !== this.seekEpoch || this.isDestroyed) return;
+
             buf.fileStart = startByte;
 
             if (this.mp4box && !this.isDestroyed) {
                 this.mp4box.appendBuffer(buf);
             }
+
+            if (currentEpoch !== this.seekEpoch || this.isDestroyed) return;
 
             this.currentByteOffset = startByte + buf.byteLength;
 
@@ -429,6 +450,7 @@ export class CanvasPlayerEngine {
     }
 
     async onSeeking() {
+        this.seekEpoch = (this.seekEpoch || 0) + 1;
         // Abort in-flight chunk download from prior position
         if (this.abortController) {
             this.abortController.abort();
@@ -439,6 +461,13 @@ export class CanvasPlayerEngine {
     }
 
     async onSeeked() {
+        const epoch = ++this.seekEpoch;
+        if (this.abortController) {
+            this.abortController.abort();
+            this.abortController = new AbortController();
+            this.isFetching = false;
+        }
+
         if (this.decoder && this.decoder.state === "configured") {
             try {
                 await this.decoder.flush();
@@ -446,7 +475,10 @@ export class CanvasPlayerEngine {
                 // Ignore flush errors on seek
             }
         }
+        this.needsKeyframe = true;
         this.clearFrameQueue();
+
+        if (epoch !== this.seekEpoch || this.isDestroyed) return;
 
         const targetTimeSeconds = this.mediaClock?.currentTime || 0;
         this.seekToTime(targetTimeSeconds);
@@ -455,7 +487,10 @@ export class CanvasPlayerEngine {
 
     seekToTime(targetTimeSeconds) {
         if (this.videoTrack && this.mp4box) {
-            const seekInfo = this.mp4box.seek(targetTimeSeconds, true);
+            const trak = this.mp4box.getTrackById(this.videoTrack.id);
+            const seekInfo = trak
+                ? this.mp4box.seekTrack(targetTimeSeconds, true, trak)
+                : this.mp4box.seek(targetTimeSeconds, true);
             if (seekInfo && typeof seekInfo.offset === "number") {
                 this.currentByteOffset = seekInfo.offset;
             }
