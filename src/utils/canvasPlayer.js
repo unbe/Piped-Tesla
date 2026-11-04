@@ -54,6 +54,7 @@ export class CanvasPlayerEngine {
         this.currentByteOffset = 0;
         this.totalBytes = null;
         this.isFetching = false;
+        this.isSeeking = false;
         this.needsKeyframe = true;
         this.seekEpoch = 0;
         this.maxBufferAheadSeconds = 12; // Buffer up to 12s ahead of mediaClock.currentTime
@@ -213,6 +214,23 @@ export class CanvasPlayerEngine {
         this.isReady = true;
     }
 
+    getDecoderConfig() {
+        if (!this.videoTrack || !this.mp4box) return null;
+        const trak = this.mp4box.moov?.traks?.find(t => t.tkhd.track_id === this.videoTrack.id);
+        const description = this.getCodecDescription(trak);
+
+        const config = {
+            codec: this.videoTrack.codec,
+            codedWidth: this.videoTrack.video.width,
+            codedHeight: this.videoTrack.video.height,
+        };
+
+        if (description) {
+            config.description = description;
+        }
+        return config;
+    }
+
     initDecoder() {
         if (typeof VideoDecoder === "undefined") {
             throw new Error("WebCodecs VideoDecoder is not supported in this browser environment");
@@ -239,21 +257,26 @@ export class CanvasPlayerEngine {
             },
         });
 
-        const trak = this.mp4box.moov?.traks?.find(t => t.tkhd.track_id === this.videoTrack.id);
-        const description = this.getCodecDescription(trak);
-
-        const config = {
-            codec: this.videoTrack.codec,
-            codedWidth: this.videoTrack.video.width,
-            codedHeight: this.videoTrack.video.height,
-        };
-
-        if (description) {
-            config.description = description;
+        const config = this.getDecoderConfig();
+        if (config) {
+            this.decoder.configure(config);
         }
-
-        this.decoder.configure(config);
         this.needsKeyframe = true;
+    }
+
+    resetDecoder() {
+        if (!this.decoder) return;
+        try {
+            this.decoder.reset();
+            const config = this.getDecoderConfig();
+            if (config) {
+                this.decoder.configure(config);
+            }
+        } catch (e) {
+            console.warn("Reset decoder error:", e);
+        }
+        this.needsKeyframe = true;
+        this.clearFrameQueue();
     }
 
     decodeSample(sample) {
@@ -381,8 +404,8 @@ export class CanvasPlayerEngine {
 
             this.renderFrame();
 
-            // Periodic buffer filling while playing
-            if (this.mediaClock && !this.mediaClock.paused && !this.isFetching) {
+            // Periodic buffer filling while playing (skip if currently seeking)
+            if (this.mediaClock && !this.mediaClock.paused && !this.isFetching && !this.isSeeking) {
                 this.bufferAhead();
             }
 
@@ -402,8 +425,11 @@ export class CanvasPlayerEngine {
 
         const masterTimeUs = this.mediaClock.currentTime * 1_000_000; // Microseconds
 
-        // 1. Drop stale frames older than master clock (with 60ms latency tolerance)
-        while (this.frameQueue.length > 1 && this.frameQueue[0].timestamp < masterTimeUs - 60_000) {
+        // 1. Drop stale preroll frames older than master clock (with 60ms tolerance)
+        while (this.frameQueue.length > 0 && this.frameQueue[0].timestamp < masterTimeUs - 60_000) {
+            if (this.frameQueue.length === 1 && (this.mediaClock.paused || this.isSeeking)) {
+                break;
+            }
             const staleFrame = this.frameQueue.shift();
             staleFrame.close();
         }
@@ -413,8 +439,9 @@ export class CanvasPlayerEngine {
             const headFrame = this.frameQueue[0];
             const timeDiff = headFrame.timestamp - masterTimeUs;
 
-            // Render if frame is within 50ms window or clock reached this timestamp
-            if (timeDiff <= 50_000) {
+            // Render strictly if within window (-60ms to +50ms).
+            // Past preroll frames are never drawn to prevent the fast-forward visual artifact on seek.
+            if (timeDiff >= -60_000 && timeDiff <= 50_000) {
                 try {
                     this.ctx.drawImage(headFrame, 0, 0, this.canvas.width, this.canvas.height);
                 } catch (e) {
@@ -430,6 +457,12 @@ export class CanvasPlayerEngine {
                     } catch {
                         // Ignore draw error
                     }
+                }
+            } else if (this.mediaClock.paused && this.frameQueue.length === 1) {
+                try {
+                    this.ctx.drawImage(headFrame, 0, 0, this.canvas.width, this.canvas.height);
+                } catch {
+                    // Ignore draw error
                 }
             }
         }
@@ -450,6 +483,8 @@ export class CanvasPlayerEngine {
     }
 
     async onSeeking() {
+        this.isSeeking = true;
+        this.needsKeyframe = true;
         this.seekEpoch = (this.seekEpoch || 0) + 1;
         // Abort in-flight chunk download from prior position
         if (this.abortController) {
@@ -462,26 +497,23 @@ export class CanvasPlayerEngine {
 
     async onSeeked() {
         const epoch = ++this.seekEpoch;
+        this.isSeeking = true;
+        this.needsKeyframe = true;
+
         if (this.abortController) {
             this.abortController.abort();
             this.abortController = new AbortController();
             this.isFetching = false;
         }
 
-        if (this.decoder && this.decoder.state === "configured") {
-            try {
-                await this.decoder.flush();
-            } catch {
-                // Ignore flush errors on seek
-            }
-        }
-        this.needsKeyframe = true;
         this.clearFrameQueue();
+        this.resetDecoder();
 
         if (epoch !== this.seekEpoch || this.isDestroyed) return;
 
         const targetTimeSeconds = this.mediaClock?.currentTime || 0;
         this.seekToTime(targetTimeSeconds);
+        this.isSeeking = false;
         this.renderFrame();
     }
 
